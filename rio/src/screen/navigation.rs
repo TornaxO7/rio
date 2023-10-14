@@ -140,7 +140,7 @@ impl ScreenNavigation {
                 self.tab(titles, len, position_y, 9.);
             }
             // Minimal simply does not do anything
-            NavigationMode::Plain => {}
+            NavigationMode::Plain | NavigationMode::NoTab => {}
         }
     }
 
