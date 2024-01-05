@@ -397,7 +397,7 @@ impl Sugarloaf {
             }
 
             let rect_pos_y = self.text_y + mod_pos_y;
-            let width_bound = sugar_width * sugar_char_width;
+            let width_bound = 2. * sugar_width * sugar_char_width;
 
             let quantity = if repeated.count() > 0 {
                 1 + repeated.count()
