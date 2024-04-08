@@ -31,7 +31,7 @@
             extensions = [ "rust-src" "rust-analyzer" ];
           };
 
-          mkRio = import ./pkgRio.nix;
+          mkRio = import ./nix/package.nix;
 
           mkDevShell = rust-toolchain:
             let
