@@ -79,6 +79,16 @@ pub enum ColorType {
     Rgba,
 }
 
+impl From<image::ColorType> for ColorType {
+    fn from(color_type: image::ColorType) -> Self {
+        match color_type {
+            image::ColorType::Rgb8 => Self::Rgb,
+            image::ColorType::Rgba8 => Self::Rgba,
+            _ => unimplemented!("Other color types aren't supported at the moment."),
+        }
+    }
+}
+
 /// Defines a single graphic read from the PTY.
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct SugarGraphicData {
