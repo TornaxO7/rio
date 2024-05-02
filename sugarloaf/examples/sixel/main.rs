@@ -62,22 +62,26 @@ impl AppData {
         };
 
         let mut sugarloaf = {
-            let rt = Runtime::new().unwrap();
-            rt.block_on(async {
-                Sugarloaf::new(
-                    sugarloaf_window,
-                    sugarloaf::SugarloafRenderer::default(),
-                    &sugarloaf::font::FontLibrary::default(),
-                    sugarloaf_layout,
-                )
-                .await
-                .expect("Sugarloaf instance should be created")
+            std::thread::spawn(move || {
+                let rt = Runtime::new().unwrap();
+                rt.block_on(async {
+                    Sugarloaf::new(
+                        sugarloaf_window,
+                        sugarloaf::SugarloafRenderer::default(),
+                        &sugarloaf::font::FontLibrary::default(),
+                        sugarloaf_layout,
+                    )
+                    .await
+                    .expect("Sugarloaf instance should be created")
+                })
             })
+            .join()
+            .unwrap()
         };
 
         let sixel_sugar = {
             const TEST_IMAGE_ID: SugarGraphicId = SugarGraphicId(69);
-            let test_image = image::io::Reader::open("./peepoShy.png")
+            let test_image = image::io::Reader::open("./examples/sixel/peepoShy.png")
                 .unwrap()
                 .decode()
                 .unwrap();
