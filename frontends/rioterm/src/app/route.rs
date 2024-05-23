@@ -134,10 +134,6 @@ impl Route {
         let ime = Ime::new();
 
         let background_image = config.window.background_image.clone();
-        let background_color = wgpu::Color {
-            a: config.window.background_opacity as f64,
-            ..config.colors.background.1
-        };
 
         let power_preference = match config.renderer.performance {
             RendererPerformance::High => wgpu::PowerPreference::HighPerformance,
@@ -217,12 +213,30 @@ impl Route {
             config.keyboard,
         );
 
-        sugarloaf.set_background_color(background_color);
+        sugarloaf.set_background_color(state.dynamic_background);
         if let Some(image) = background_image {
             sugarloaf.set_background_image(&image);
         }
+
+        // This is quite hacky and sugarloaf should provide a better
+        // approach for it soon, but basically the idea is
+        // resize then render to compute font dimensions and then
+        // update the terminal properties that will lead to a second
+        // render by wakeup event.
         sugarloaf.resize(dimensions.0 as u32, dimensions.1 as u32);
         sugarloaf.render();
+        let layout = sugarloaf.layout();
+        for created_ctx in context_manager.contexts() {
+            let mut terminal = created_ctx.terminal.lock();
+            terminal.resize::<SugarloafLayout>(layout);
+            drop(terminal);
+            let _ = created_ctx.messenger.send_resize(
+                layout.width as u16,
+                layout.height as u16,
+                layout.columns as u16,
+                layout.lines as u16,
+            );
+        }
 
         Ok(Route {
             is_focused: true,
@@ -369,8 +383,7 @@ impl Route {
 
         if (lmb_pressed || rmb_pressed) && (self.modifiers.shift || !self.mouse_mode()) {
             self.update_selection(point, square_side);
-            // self.ctx.schedule_render(60);
-            self.render();
+            self.ctx.schedule_render(60);
         } else if square_changed && self.has_mouse_motion_and_drag() {
             if lmb_pressed {
                 self.mouse_report(32, true);
@@ -466,7 +479,7 @@ impl Route {
             }
             self.process_mouse_bindings(button);
 
-            // self.render();
+            self.render();
         } else {
             if !self.modifiers.shift && self.mouse_mode() {
                 let code = match button {
@@ -1112,13 +1125,8 @@ impl Route {
         layout.update();
         self.resize_all_contexts();
 
-        let mut bg_color = self.state.named_colors.background.1;
-
-        if config.window.background_opacity < 1. {
-            bg_color.a = config.window.background_opacity as f64;
-        }
-
-        self.sugarloaf.set_background_color(bg_color);
+        self.sugarloaf
+            .set_background_color(self.state.dynamic_background);
         if let Some(image) = &config.window.background_image {
             self.sugarloaf.set_background_image(image);
         }

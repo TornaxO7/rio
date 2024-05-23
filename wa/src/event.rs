@@ -304,12 +304,19 @@ pub enum Appearance {
     DarkHighContrast,
 }
 
+#[derive(PartialEq, Debug)]
+pub enum EventHandlerControl {
+    Wait,
+    WaitUntil(std::time::Instant),
+    Running,
+}
+
 /// A trait defining event callbacks.
 pub trait EventHandler {
     fn create_window(&mut self);
     fn create_tab(&mut self, _urls_to_load: Option<&str>);
     fn start(&mut self);
-    fn process(&mut self);
+    fn process(&mut self) -> EventHandlerControl;
     // #[allow(clippy::too_many_arguments)]
     // fn init(
     //     &mut self,
@@ -418,4 +425,12 @@ pub trait EventHandler {
         _drag_state: DragState,
     ) {
     }
+}
+
+pub enum WindowEvent {
+    Focus(bool),
+}
+
+pub enum QueuedEvent {
+    Window(u16, WindowEvent),
 }

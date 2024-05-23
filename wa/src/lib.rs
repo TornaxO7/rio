@@ -10,6 +10,7 @@
 
 #![cfg(target_os = "macos")]
 
+pub mod app;
 pub mod conf;
 mod event;
 pub mod event_loop;
@@ -216,6 +217,12 @@ pub enum CursorIcon {
     NSResize,
     NESWResize,
     NWSEResize,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum Target {
+    Game,
+    Application,
 }
 
 #[cfg(target_os = "macos")]

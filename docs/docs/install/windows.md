@@ -7,8 +7,8 @@ Note: Rio is only available for Windows 10 or later.
 
 Prebuilt binaries for Windows:
 
-- [Download Microsoft installer](https://github.com/raphamorim/rio/releases/download/v0.0.37/Rio-installer.msi)
-- [Download Microsoft executable](https://github.com/raphamorim/rio/releases/download/v0.0.37/Rio-portable.exe)
+- [Download Microsoft installer](https://github.com/raphamorim/rio/releases/download/v0.0.38/Rio-installer.msi)
+- [Download Microsoft executable](https://github.com/raphamorim/rio/releases/download/v0.0.38/Rio-portable.exe)
 - [Using Chocolatey package manager](https://community.chocolatey.org/packages/rio-terminal)
 
 ```sh
@@ -20,7 +20,7 @@ There's a few things to note about the installer and the portable version:
 - The browser will ask if you want to keep the file, click "Keep" to save the installer/executable on your computer.
 - When opening the file, Windows will give you a warning, click "More info" and then "Run anyway" to run the installer/executable.
 
-If you want to change the default shell to the new PowerShell platform, change the following line in your config file (see [Configuration file](/docs/configuration-file) for more information):
+If you want to change the default shell to the new PowerShell platform, change the following line in your config file (see [Configuration file](/docs/next/configuration-file) for more information):
 
 ```toml
 shell = { program = "pwsh", args = ["--login"] }
