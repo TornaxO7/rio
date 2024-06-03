@@ -91,7 +91,6 @@ pub struct CachedRunData {
     pub coords: Vec<i16>,
     pub span: FragmentStyle,
     pub line: u32,
-    pub color: [f32; 4],
     pub font: usize,
     pub size: f32,
     pub level: u8,
@@ -100,15 +99,9 @@ pub struct CachedRunData {
     pub ascent: f32,
     pub descent: f32,
     pub leading: f32,
-    pub background_color: Option<[f32; 4]>,
-    pub underline: bool,
-    pub underline_offset: f32,
-    pub underline_size: f32,
-    pub underline_color: [f32; 4],
     pub strikeout_offset: f32,
     pub strikeout_size: f32,
     pub advance: f32,
-    pub cursor: SugarCursor,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -166,8 +159,6 @@ impl RenderData {
                 span: cached_run.span,
                 line,
                 font: cached_run.font,
-                color: cached_run.color,
-                background_color: cached_run.background_color,
                 size: cached_run.size,
                 level: cached_run.level,
                 whitespace: false,
@@ -175,11 +166,6 @@ impl RenderData {
                 ascent: cached_run.ascent,
                 descent: cached_run.descent,
                 leading: cached_run.leading,
-                cursor: cached_run.cursor,
-                underline: cached_run.underline,
-                underline_color: cached_run.underline_color,
-                underline_offset: cached_run.underline_offset,
-                underline_size: cached_run.underline_size,
                 strikeout_offset: cached_run.strikeout_offset,
                 strikeout_size: cached_run.strikeout_size,
                 advance: cached_run.advance,
@@ -203,7 +189,7 @@ impl RenderData {
         if line != self.last_line {
             self.last_line = line;
             self.data.last_span = 0;
-            self.last_cached_run = RunCacheEntry::default();
+            self.last_cached_run.runs.clear();
         }
 
         let coords_start = self.data.coords.len() as u32;
@@ -213,10 +199,10 @@ impl RenderData {
         let coords_end = self.data.coords.len() as u32;
         let mut clusters_start = self.data.clusters.len() as u32;
         let metrics = shaper.metrics();
-        let mut advance = 0.;
 
+        let mut advance = 0.;
         let mut last_span = self.data.last_span;
-        let mut span_data = &styles[self.data.last_span];
+        let mut span_data = &styles[last_span];
 
         shaper.shape_with(|c| {
             if c.info.boundary() == Boundary::Mandatory {
@@ -235,8 +221,6 @@ impl RenderData {
                         line,
                         font: *font,
                         coords: (coords_start, coords_end),
-                        color: span_data.color,
-                        background_color: span_data.background_color,
                         size,
                         level,
                         whitespace: false,
@@ -245,17 +229,6 @@ impl RenderData {
                         ascent: metrics.ascent * span_data.line_spacing,
                         descent: metrics.descent * span_data.line_spacing,
                         leading: metrics.leading * span_data.line_spacing,
-                        cursor: span_data.cursor,
-                        underline: span_data.underline,
-                        underline_color: span_data
-                            .underline_color
-                            .unwrap_or(span_data.color),
-                        underline_offset: span_data
-                            .underline_offset
-                            .unwrap_or(metrics.underline_offset),
-                        underline_size: span_data
-                            .underline_size
-                            .unwrap_or(metrics.stroke_size),
                         strikeout_offset: metrics.strikeout_offset,
                         strikeout_size: metrics.stroke_size,
                         advance,
@@ -294,8 +267,6 @@ impl RenderData {
                         line,
                         font: *font,
                         coords: coords.to_owned(),
-                        color: span_data.color,
-                        background_color: span_data.background_color,
                         size,
                         level,
                         whitespace: false,
@@ -304,17 +275,6 @@ impl RenderData {
                         ascent: metrics.ascent * span_data.line_spacing,
                         descent: metrics.descent * span_data.line_spacing,
                         leading: metrics.leading * span_data.line_spacing,
-                        cursor: span_data.cursor,
-                        underline: span_data.underline,
-                        underline_color: span_data
-                            .underline_color
-                            .unwrap_or(span_data.color),
-                        underline_offset: span_data
-                            .underline_offset
-                            .unwrap_or(metrics.underline_offset),
-                        underline_size: span_data
-                            .underline_size
-                            .unwrap_or(metrics.stroke_size),
                         strikeout_offset: metrics.strikeout_offset,
                         strikeout_size: metrics.stroke_size,
                         advance,
@@ -394,7 +354,7 @@ impl RenderData {
         }
         self.data.last_span = last_span;
         let run_data = RunData {
-            span: *span_data,
+            span: styles[last_span],
             line,
             font: *font,
             coords: (coords_start, coords_end),
@@ -406,15 +366,6 @@ impl RenderData {
             ascent: metrics.ascent * span_data.line_spacing,
             descent: metrics.descent * span_data.line_spacing,
             leading: metrics.leading * span_data.line_spacing,
-            color: span_data.color,
-            background_color: span_data.background_color,
-            cursor: span_data.cursor,
-            underline: span_data.underline,
-            underline_color: span_data.underline_color.unwrap_or(span_data.color),
-            underline_offset: span_data
-                .underline_offset
-                .unwrap_or(metrics.underline_offset),
-            underline_size: span_data.underline_size.unwrap_or(metrics.stroke_size),
             strikeout_offset: metrics.strikeout_offset,
             strikeout_size: metrics.stroke_size,
             advance,
@@ -451,8 +402,6 @@ impl RenderData {
             line,
             font: *font,
             coords: coords.to_owned(),
-            color: span_data.color,
-            background_color: span_data.background_color,
             size,
             level,
             whitespace: false,
@@ -461,13 +410,6 @@ impl RenderData {
             ascent: metrics.ascent * span_data.line_spacing,
             descent: metrics.descent * span_data.line_spacing,
             leading: metrics.leading * span_data.line_spacing,
-            cursor: span_data.cursor,
-            underline: span_data.underline,
-            underline_color: span_data.underline_color.unwrap_or(span_data.color),
-            underline_offset: span_data
-                .underline_offset
-                .unwrap_or(metrics.underline_offset),
-            underline_size: span_data.underline_size.unwrap_or(metrics.stroke_size),
             strikeout_offset: metrics.strikeout_offset,
             strikeout_size: metrics.stroke_size,
             advance,
@@ -590,7 +532,7 @@ impl<'a> Run<'a> {
     /// Returns the color for the run.
     #[inline]
     pub fn color(&self) -> [f32; 4] {
-        self.run.color
+        self.run.span.color
     }
 
     /// Returns the bidi level of the run.
@@ -602,7 +544,7 @@ impl<'a> Run<'a> {
     /// Returns the cursor
     #[inline]
     pub fn cursor(&self) -> SugarCursor {
-        self.run.cursor
+        self.run.span.cursor
     }
 
     /// Returns the direction of the run.
@@ -631,31 +573,35 @@ impl<'a> Run<'a> {
     /// Returns true if the run has an background color
     #[inline]
     pub fn background_color(&self) -> Option<[f32; 4]> {
-        self.run.background_color
+        self.run.span.background_color
     }
 
     /// Returns true if the run has an underline decoration.
     #[inline]
     pub fn underline(&self) -> bool {
-        self.run.underline
+        self.run.span.underline
     }
 
     /// Returns the underline offset for the run.
     #[inline]
     pub fn underline_offset(&self) -> f32 {
-        self.run.underline_offset
+        // span_data.underline_offset.unwrap_or(metrics.underline_offset),
+        self.run.span.underline_offset.unwrap_or(0.0)
     }
 
     /// Returns the underline color for the run.
     #[inline]
     pub fn underline_color(&self) -> [f32; 4] {
-        self.run.underline_color
+        self.run.span.underline_color.unwrap_or(self.run.span.color)
     }
 
     /// Returns the underline size for the run.
     #[inline]
     pub fn underline_size(&self) -> f32 {
-        self.run.underline_size
+        self.run
+            .span
+            .underline_size
+            .unwrap_or(self.run.strikeout_size)
     }
 
     /// Returns an iterator over the clusters in logical order.
@@ -790,48 +736,57 @@ impl<'a> Cluster<'a> {
     }
 
     /// Returns the cluster information.
+    #[inline]
     pub fn info(&self) -> ClusterInfo {
         self.cluster.info
     }
 
     /// Returns true if the cluster is empty. This occurs when ignorable
     /// glyphs are removed by the shaper.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.cluster.is_empty()
     }
 
     /// Returns true if the cluster is a ligature.
+    #[inline]
     pub fn is_ligature(&self) -> bool {
         self.cluster.is_ligature()
     }
 
     /// Returns true if the cluster is a continuation of a ligature.
+    #[inline]
     pub fn is_continuation(&self) -> bool {
         self.cluster.is_continuation()
     }
 
     /// Returns true if the cluster is the final continuation of a ligature.
+    #[inline]
     pub fn is_last_continuation(&self) -> bool {
         self.cluster.is_last_continuation()
     }
 
     /// Returns true if the following cluster is a mandatory line break.
+    #[inline]
     pub fn is_newline(&self) -> bool {
         self.cluster.is_newline()
     }
 
     /// Returns the byte offset of the cluster in the source text.
+    #[inline]
     pub fn offset(&self) -> usize {
         self.cluster.offset as usize
     }
 
     /// Returns the byte range of the cluster in the source text.
+    #[inline]
     pub fn range(&self) -> Range<usize> {
         let start = self.cluster.offset as usize;
         start..start + self.cluster.len as usize
     }
 
     /// Returns an iterator over the glyphs for the cluster.
+    #[inline]
     pub fn glyphs(&self) -> Glyphs<'a> {
         let glyphs = self
             .cluster
@@ -843,6 +798,7 @@ impl<'a> Cluster<'a> {
     }
 
     /// Returns the advance of the cluster.
+    #[inline]
     pub fn advance(&self) -> f32 {
         self.cluster.advance(
             &self.layout.detailed_clusters,
@@ -904,31 +860,37 @@ impl<'a> Line<'a> {
     // }
 
     /// Returns the offset in line direction.
+    #[inline]
     pub fn offset(&self) -> f32 {
         self.line.x
     }
 
     /// Returns the baseline offset.
+    #[inline]
     pub fn baseline(&self) -> f32 {
         self.line.baseline
     }
 
     /// Returns the ascent of the line.
+    #[inline]
     pub fn ascent(&self) -> f32 {
         self.line.ascent
     }
 
     /// Returns the descent of the line.
+    #[inline]
     pub fn descent(&self) -> f32 {
         self.line.descent
     }
 
     /// Returns the leading of the line.
+    #[inline]
     pub fn leading(&self) -> f32 {
         self.line.leading
     }
 
     /// Returns the total advance of the line.
+    #[inline]
     pub fn advance(&self) -> f32 {
         self.line.width
     }
@@ -959,11 +921,13 @@ impl<'a> Line<'a> {
 
     /// Returns the size of the line (height for horizontal and width
     /// for vertical layouts).
+    #[inline]
     pub fn size(&self) -> f32 {
         self.line.ascent + self.line.descent + self.line.leading
     }
 
     /// Returns an iterator over the runs of the line.
+    #[inline]
     pub fn runs(&self) -> Runs<'a> {
         let range = self.line.runs.0 as usize..self.line.runs.1 as usize;
         Runs {
@@ -998,6 +962,7 @@ impl<'a> Iterator for Lines<'a> {
     }
 }
 
+#[inline]
 pub fn make_range(r: (u32, u32)) -> Range<usize> {
     r.0 as usize..r.1 as usize
 }

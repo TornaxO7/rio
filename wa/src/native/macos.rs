@@ -164,6 +164,11 @@ pub struct MacosDisplay {
     has_initialized: bool,
     has_focus: bool,
     modifiers: Modifiers,
+    screen_width: i32,
+    screen_height: i32,
+    dpi_scale: f32,
+    #[allow(unused)]
+    high_dpi: bool,
 }
 
 impl MacosDisplay {
@@ -263,10 +268,8 @@ impl MacosDisplay {
 
 impl MacosDisplay {
     fn transform_mouse_point(&self, point: &NSPoint) -> (f32, f32) {
-        let binding = get_handler().lock();
-        let d = binding.get(self.id).unwrap();
-        let new_x = point.x as f32 * d.dpi_scale;
-        let new_y = d.screen_height as f32 - (point.y as f32 * d.dpi_scale) - 1.;
+        let new_x = point.x as f32 * self.dpi_scale;
+        let new_y = self.screen_height as f32 - (point.y as f32 * self.dpi_scale) - 1.;
 
         (new_x, new_y)
     }
@@ -284,24 +287,22 @@ impl MacosDisplay {
     }
 
     unsafe fn update_dimensions(&mut self) -> Option<(i32, i32, f32)> {
-        let mut binding = get_handler().lock();
-        let d = binding.get_mut(self.id).unwrap();
         let screen: ObjcId = msg_send![self.window, screen];
         let dpi_scale: f64 = msg_send![screen, backingScaleFactor];
-        d.dpi_scale = dpi_scale as f32;
+        self.dpi_scale = dpi_scale as f32;
 
         let bounds: NSRect = msg_send![self.view, bounds];
-        let screen_width = (bounds.size.width as f32 * d.dpi_scale) as i32;
-        let screen_height = (bounds.size.height as f32 * d.dpi_scale) as i32;
+        let screen_width = (bounds.size.width as f32 * self.dpi_scale) as i32;
+        let screen_height = (bounds.size.height as f32 * self.dpi_scale) as i32;
 
         let dim_changed =
-            screen_width != d.screen_width || screen_height != d.screen_height;
+            screen_width != self.screen_width || screen_height != self.screen_height;
 
-        d.screen_width = screen_width;
-        d.screen_height = screen_height;
+        self.screen_width = screen_width;
+        self.screen_height = screen_height;
 
         if dim_changed {
-            Some((screen_width, screen_height, d.dpi_scale))
+            Some((screen_width, screen_height, self.dpi_scale))
         } else {
             None
         }
@@ -533,25 +534,18 @@ pub fn define_app_delegate() -> *const Class {
 
 #[inline]
 fn send_resize_event(payload: &mut MacosDisplay, rescale: bool) {
-    if let Some((w, h, scale_factor)) = unsafe { payload.update_dimensions() } {
-        if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-            match app_handler {
-                &mut HandlerState::Running {
-                    ref mut handler, ..
-                } => {
-                    handler.resize_event(payload.id, w, h, scale_factor, rescale);
-                }
-                &mut HandlerState::Waiting {
-                    ref mut handler, ..
-                } => {
-                    handler.resize_event(payload.id, w, h, scale_factor, rescale);
-                }
-                _ => {}
+    unsafe {
+        if let Some((w, h, scale_factor)) = payload.update_dimensions() {
+            if let Some(app_state) = get_app_state(&*payload.app) {
+                app_state
+                    .pending_events
+                    .borrow_mut()
+                    .push_back(QueuedEvent::Window(
+                        payload.id,
+                        WindowEvent::Resize(w, h, scale_factor, rescale),
+                    ));
             }
         }
-        // if let Ok(mut event_handler) = payload.event_handler.try_borrow_mut() {
-        // event_handler.resize_event(payload.id, w, h, scale_factor, rescale);
-        // }
     }
 }
 
@@ -559,6 +553,7 @@ fn send_resize_event(payload: &mut MacosDisplay, rescale: bool) {
 unsafe fn view_base_decl(decl: &mut ClassDecl) {
     extern "C" fn mouse_moved(this: &Object, _sel: Sel, event: ObjcId) {
         log::info!("mouse_moved");
+
         if let Some(payload) = get_display_payload(this) {
             unsafe {
                 if payload.cursor_grabbed {
@@ -570,17 +565,24 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
                 } else {
                     let point: NSPoint = msg_send!(event, locationInWindow);
                     let point = payload.transform_mouse_point(&point);
-                    if let Some(&mut HandlerState::Running {
-                        ref mut handler, ..
-                    }) = get_app_handler(&Some(payload.app))
+
+                    // Point is outside of view
+                    if point.0.is_sign_negative()
+                        || point.1.is_sign_negative()
+                        || point.0 > payload.screen_width as f32
+                        || point.1 > payload.screen_height as f32
                     {
-                        handler.mouse_motion_event(payload.id, point.0, point.1);
+                        return;
                     }
 
-                    // if let Ok(mut event_handler) = payload.event_handler.try_borrow_mut()
-                    // {
-                    //     event_handler.mouse_motion_event(payload.id, point.0, point.1);
-                    // }
+                    if let Some(app_state) = get_app_state(&*payload.app) {
+                        app_state.pending_events.borrow_mut().push_back(
+                            QueuedEvent::Window(
+                                payload.id,
+                                WindowEvent::MouseMotion(point.0, point.1),
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -875,9 +877,8 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
     extern "C" fn window_did_become_key(this: &Object, _sel: Sel, _event: ObjcId) {
         log::info!("window_did_become_key");
         if let Some(payload) = get_display_payload(this) {
-            if let Some(app) = NATIVE_APP.get() {
-                let delegate = unsafe { &**app.app_delegate };
-                if let Some(app_state) = get_app_state(delegate) {
+            unsafe {
+                if let Some(app_state) = get_app_state(&*payload.app) {
                     app_state
                         .pending_events
                         .borrow_mut()
@@ -893,9 +894,8 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
     extern "C" fn window_did_resign_key(this: &Object, _sel: Sel, _event: ObjcId) {
         log::info!("window_did_resign_key");
         if let Some(payload) = get_display_payload(this) {
-            if let Some(app) = NATIVE_APP.get() {
-                let delegate = unsafe { &**app.app_delegate };
-                if let Some(app_state) = get_app_state(delegate) {
+            unsafe {
+                if let Some(app_state) = get_app_state(&*payload.app) {
                     app_state
                         .pending_events
                         .borrow_mut()
@@ -948,28 +948,15 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
                         dragged_files.push(std::path::PathBuf::from(path));
                     }
 
-                    if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                        match app_handler {
-                            &mut HandlerState::Running {
-                                ref mut handler, ..
-                            } => {
-                                handler.files_dragged_event(
-                                    payload.id,
-                                    dragged_files,
-                                    crate::DragState::Entered,
-                                );
-                            }
-                            &mut HandlerState::Waiting {
-                                ref mut handler, ..
-                            } => {
-                                handler.files_dragged_event(
-                                    payload.id,
-                                    dragged_files,
-                                    crate::DragState::Entered,
-                                );
-                            }
-                            _ => {}
-                        }
+                    if let Some(&mut HandlerState::Running {
+                        ref mut handler, ..
+                    }) = get_app_handler(&Some(payload.app))
+                    {
+                        handler.files_dragged_event(
+                            payload.id,
+                            dragged_files,
+                            crate::DragState::Entered,
+                        );
                     }
                 }
             }
@@ -980,28 +967,11 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
     extern "C" fn dragging_exited(this: &Object, _: Sel, _sender: ObjcId) {
         log::info!("dragging_exited");
         if let Some(payload) = get_display_payload(this) {
-            if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                match app_handler {
-                    &mut HandlerState::Running {
-                        ref mut handler, ..
-                    } => {
-                        handler.files_dragged_event(
-                            payload.id,
-                            vec![],
-                            crate::DragState::Exited,
-                        );
-                    }
-                    &mut HandlerState::Waiting {
-                        ref mut handler, ..
-                    } => {
-                        handler.files_dragged_event(
-                            payload.id,
-                            vec![],
-                            crate::DragState::Exited,
-                        );
-                    }
-                    _ => {}
-                }
+            if let Some(&mut HandlerState::Running {
+                ref mut handler, ..
+            }) = get_app_handler(&Some(payload.app))
+            {
+                handler.files_dragged_event(payload.id, vec![], crate::DragState::Exited);
             }
         }
     }
@@ -1022,20 +992,11 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
                         dropped_files.push(std::path::PathBuf::from(path));
                     }
 
-                    if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                        match app_handler {
-                            &mut HandlerState::Running {
-                                ref mut handler, ..
-                            } => {
-                                handler.files_dropped_event(payload.id, dropped_files);
-                            }
-                            &mut HandlerState::Waiting {
-                                ref mut handler, ..
-                            } => {
-                                handler.files_dropped_event(payload.id, dropped_files);
-                            }
-                            _ => {}
-                        }
+                    if let Some(&mut HandlerState::Running {
+                        ref mut handler, ..
+                    }) = get_app_handler(&Some(payload.app))
+                    {
+                        handler.files_dropped_event(payload.id, dropped_files);
                     }
                 }
             }
@@ -1069,20 +1030,11 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
                 .unwrap()
                 .quit_requested = true;
 
-            if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                match app_handler {
-                    &mut HandlerState::Running {
-                        ref mut handler, ..
-                    } => {
-                        handler.quit_requested_event();
-                    }
-                    &mut HandlerState::Waiting {
-                        ref mut handler, ..
-                    } => {
-                        handler.quit_requested_event();
-                    }
-                    _ => {}
-                }
+            if let Some(&mut HandlerState::Running {
+                ref mut handler, ..
+            }) = get_app_handler(&Some(payload.app))
+            {
+                handler.quit_requested_event();
             }
 
             // user code hasn't intervened, quit the app
@@ -1165,30 +1117,16 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
                 if let Some(key) = get_event_keycode(event) {
                     // if let Some(event_handler) = payload.context() {
 
-                    if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                        match app_handler {
-                            &mut HandlerState::Running {
-                                ref mut handler, ..
-                            } => {
-                                handler.key_down_event(
-                                    payload.id,
-                                    key,
-                                    repeat,
-                                    get_event_char(event),
-                                );
-                            }
-                            &mut HandlerState::Waiting {
-                                ref mut handler, ..
-                            } => {
-                                handler.key_down_event(
-                                    payload.id,
-                                    key,
-                                    repeat,
-                                    get_event_char(event),
-                                );
-                            }
-                            _ => {}
-                        }
+                    if let Some(&mut HandlerState::Running {
+                        ref mut handler, ..
+                    }) = get_app_handler(&Some(payload.app))
+                    {
+                        handler.key_down_event(
+                            payload.id,
+                            key,
+                            repeat,
+                            get_event_char(event),
+                        );
                     }
 
                     // }
@@ -1200,20 +1138,11 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
     extern "C" fn appearance_did_change(this: &Object, _sel: Sel, _app: ObjcId) {
         log::info!("appearance_did_change");
         if let Some(payload) = get_display_payload(this) {
-            if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                match app_handler {
-                    &mut HandlerState::Running {
-                        ref mut handler, ..
-                    } => {
-                        handler.appearance_change_event(payload.id, App::appearance());
-                    }
-                    &mut HandlerState::Waiting {
-                        ref mut handler, ..
-                    } => {
-                        handler.appearance_change_event(payload.id, App::appearance());
-                    }
-                    _ => {}
-                }
+            if let Some(&mut HandlerState::Running {
+                ref mut handler, ..
+            }) = get_app_handler(&Some(payload.app))
+            {
+                handler.appearance_change_event(payload.id, App::appearance());
             }
         }
     }
@@ -1222,20 +1151,11 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
         if let Some(payload) = get_display_payload(this) {
             if let Some(key) = get_event_keycode(event) {
                 log::info!("KEY_UP (key={:?}", key);
-                if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                    match app_handler {
-                        &mut HandlerState::Running {
-                            ref mut handler, ..
-                        } => {
-                            handler.key_up_event(payload.id, key);
-                        }
-                        &mut HandlerState::Waiting {
-                            ref mut handler, ..
-                        } => {
-                            handler.key_up_event(payload.id, key);
-                        }
-                        _ => {}
-                    }
+                if let Some(&mut HandlerState::Running {
+                    ref mut handler, ..
+                }) = get_app_handler(&Some(payload.app))
+                {
+                    handler.key_up_event(payload.id, key);
                 }
             }
         }
@@ -1250,25 +1170,19 @@ unsafe fn view_base_decl(decl: &mut ClassDecl) {
             new_pressed: bool,
         ) {
             if new_pressed ^ old_pressed {
-                // if new_pressed {
-                if let Some(app_handler) = get_app_handler(&None) {
-                    match app_handler {
-                        &mut HandlerState::Running {
-                            ref mut handler, ..
-                        } => {
-                            handler.modifiers_event(payload.id, keycode, mods);
-                        }
-                        &mut HandlerState::Waiting {
-                            ref mut handler, ..
-                        } => {
-                            handler.modifiers_event(payload.id, keycode, mods);
-                        }
-                        _ => {}
+                if new_pressed {
+                    if let Some(&mut HandlerState::Running {
+                        ref mut handler, ..
+                    }) = get_app_handler(&Some(payload.app))
+                    {
+                        handler.modifiers_event(payload.id, Some(keycode), mods);
                     }
+                } else if let Some(&mut HandlerState::Running {
+                    ref mut handler, ..
+                }) = get_app_handler(&Some(payload.app))
+                {
+                    handler.modifiers_event(payload.id, None, mods);
                 }
-                // } else {
-                //     event_handler.modifiers_event(payload.id, keycode, mods);
-                // }
             }
         }
 
@@ -1507,41 +1421,20 @@ extern "C" fn draw_rect(this: &Object, _sel: Sel, _rect: NSRect) {
     log::info!("draw_rect");
     if let Some(payload) = get_display_payload(this) {
         if !payload.has_initialized {
-            let id = payload.id;
-
             unsafe { payload.update_dimensions() };
 
-            let d = get_handler().lock();
-            let d = d.get(id).unwrap();
-
-            if let Some(app_handler) = get_app_handler(&Some(payload.app)) {
-                match app_handler {
-                    &mut HandlerState::Running {
-                        ref mut handler, ..
-                    } => {
-                        handler.resize_event(
-                            payload.id,
-                            d.screen_width,
-                            d.screen_height,
-                            d.dpi_scale,
-                            true,
-                        );
-                        payload.has_initialized = true;
-                    }
-                    &mut HandlerState::Waiting {
-                        ref mut handler, ..
-                    } => {
-                        handler.resize_event(
-                            payload.id,
-                            d.screen_width,
-                            d.screen_height,
-                            d.dpi_scale,
-                            true,
-                        );
-                        payload.has_initialized = true;
-                    }
-                    _ => {}
-                }
+            if let Some(&mut HandlerState::Running {
+                ref mut handler, ..
+            }) = get_app_handler(&Some(payload.app))
+            {
+                handler.resize_event(
+                    payload.id,
+                    payload.screen_width,
+                    payload.screen_height,
+                    payload.dpi_scale,
+                    true,
+                );
+                payload.has_initialized = true;
             }
         }
     }
@@ -1550,14 +1443,13 @@ extern "C" fn draw_rect(this: &Object, _sel: Sel, _rect: NSRect) {
 #[inline]
 fn initialize_view(this: &Object) -> (i32, i32, f32) {
     if let Some(payload) = get_display_payload(this) {
-        let id = payload.id;
-
         unsafe { payload.update_dimensions() };
 
-        let d = get_handler().lock();
-        let d = d.get(id).unwrap();
-
-        return (d.screen_width, d.screen_height, d.dpi_scale);
+        return (
+            payload.screen_width,
+            payload.screen_height,
+            payload.dpi_scale,
+        );
     }
 
     // TODO: Use constants for defaults
@@ -1697,6 +1589,7 @@ pub fn define_metal_view_class(
     decl.register()
 }
 
+#[inline]
 pub fn get_display_payload(this: &Object) -> Option<&mut MacosDisplay> {
     unsafe {
         let ptr: *mut c_void = *this.get_ivar(VIEW_IVAR_NAME);
@@ -1708,6 +1601,7 @@ pub fn get_display_payload(this: &Object) -> Option<&mut MacosDisplay> {
     }
 }
 
+#[inline]
 fn get_app_state(this: &Object) -> Option<&mut AppState> {
     unsafe {
         let ptr: *mut c_void = *this.get_ivar(APP_STATE_IVAR_NAME);
@@ -1719,6 +1613,7 @@ fn get_app_state(this: &Object) -> Option<&mut AppState> {
     }
 }
 
+#[inline]
 fn get_app_handler(app: &Option<*mut Object>) -> Option<&mut HandlerState> {
     let delegate: *mut Object = if let Some(this) = app {
         *this
@@ -1873,38 +1768,20 @@ impl App {
     }
 
     pub fn create_window() {
-        if let Some(app_handler) = get_app_handler(&None) {
-            match app_handler {
-                &mut HandlerState::Running {
-                    ref mut handler, ..
-                } => {
-                    handler.create_window();
-                }
-                &mut HandlerState::Waiting {
-                    ref mut handler, ..
-                } => {
-                    handler.create_window();
-                }
-                _ => {}
-            }
+        if let Some(&mut HandlerState::Running {
+            ref mut handler, ..
+        }) = get_app_handler(&None)
+        {
+            handler.create_window();
         }
     }
 
     pub fn create_tab(tab_payload: Option<&str>) {
-        if let Some(app_handler) = get_app_handler(&None) {
-            match app_handler {
-                &mut HandlerState::Running {
-                    ref mut handler, ..
-                } => {
-                    handler.create_tab(tab_payload);
-                }
-                &mut HandlerState::Waiting {
-                    ref mut handler, ..
-                } => {
-                    handler.create_tab(tab_payload);
-                }
-                _ => {}
-            }
+        if let Some(&mut HandlerState::Running {
+            ref mut handler, ..
+        }) = get_app_handler(&None)
+        {
+            handler.create_tab(tab_payload);
         }
     }
 
@@ -1926,16 +1803,43 @@ impl App {
                             match event {
                                 QueuedEvent::Window(window_id, event) => match event {
                                     WindowEvent::Focus(focus) => {
-                                        match app_state.handler {
-                                            Some(HandlerState::Running {
-                                                ref mut handler,
-                                                ..
-                                            }) => handler.focus_event(window_id, focus),
-                                            Some(HandlerState::Waiting {
-                                                ref mut handler,
-                                                ..
-                                            }) => handler.focus_event(window_id, focus),
-                                            _ => {}
+                                        if let Some(HandlerState::Running {
+                                            ref mut handler,
+                                            ..
+                                        }) = app_state.handler
+                                        {
+                                            handler.focus_event(window_id, focus);
+                                        }
+                                    }
+                                    WindowEvent::MouseMotion(pos_x, pos_y) => {
+                                        if let Some(HandlerState::Running {
+                                            ref mut handler,
+                                            ..
+                                        }) = app_state.handler
+                                        {
+                                            handler.mouse_motion_event(
+                                                window_id, pos_x, pos_y,
+                                            );
+                                        };
+                                    }
+                                    WindowEvent::Resize(
+                                        width,
+                                        height,
+                                        scale_factor,
+                                        rescale,
+                                    ) => {
+                                        if let Some(HandlerState::Running {
+                                            ref mut handler,
+                                            ..
+                                        }) = app_state.handler
+                                        {
+                                            handler.resize_event(
+                                                window_id,
+                                                width,
+                                                height,
+                                                scale_factor,
+                                                rescale,
+                                            );
                                         };
                                     }
                                 },
@@ -1944,9 +1848,6 @@ impl App {
 
                         let control = match app_state.handler {
                             Some(HandlerState::Running {
-                                ref mut handler, ..
-                            }) => handler.process(),
-                            Some(HandlerState::Waiting {
                                 ref mut handler, ..
                             }) => handler.process(),
                             _ => EventHandlerControl::Wait,
@@ -1999,20 +1900,11 @@ impl App {
         unsafe {
             let pool: ObjcId = msg_send![class!(NSAutoreleasePool), new];
 
-            if let Some(app_handler) = get_app_handler(&Some(*self.app_delegate)) {
-                match app_handler {
-                    &mut HandlerState::Running {
-                        ref mut handler, ..
-                    } => {
-                        handler.start();
-                    }
-                    &mut HandlerState::Waiting {
-                        ref mut handler, ..
-                    } => {
-                        handler.start();
-                    }
-                    _ => {}
-                }
+            if let Some(&mut HandlerState::Running {
+                ref mut handler, ..
+            }) = get_app_handler(&Some(*self.app_delegate))
+            {
+                handler.start();
             }
 
             let () = msg_send![*self.inner, finishLaunching];
@@ -2163,11 +2055,7 @@ impl Window {
             crate::set_display(
                 id,
                 NativeDisplayData {
-                    ..NativeDisplayData::new(
-                        conf.window_width,
-                        conf.window_height,
-                        // clipboard,
-                    )
+                    ..NativeDisplayData::new()
                 },
             );
 
@@ -2194,6 +2082,10 @@ impl Window {
                 cursors: HashMap::new(),
                 // event_handler,
                 modifiers: Modifiers::default(),
+                screen_width: 0,
+                screen_height: 0,
+                high_dpi: false,
+                dpi_scale: 1.0,
             };
 
             let window_masks = if conf.hide_toolbar {
@@ -2305,7 +2197,8 @@ impl Window {
 
             if conf.hide_toolbar {
                 // let () = msg_send![*window, setMovableByWindowBackground: YES];
-                let () = msg_send![*window, setTitleVisibility: YES];
+                let nswindow_title_hidden = 1;
+                let () = msg_send![*window, setTitleVisibility: nswindow_title_hidden];
                 let () = msg_send![*window, setTitlebarAppearsTransparent: YES];
             }
 
@@ -2361,6 +2254,7 @@ impl Window {
             let _: () = msg_send![*window, setRestorable: NO];
 
             let () = msg_send![*window, makeFirstResponder: **view.as_strong_ptr()];
+            // let () = msg_send![*window, initialFirstResponder: **view.as_strong_ptr()];
             let () = msg_send![*window, makeKeyAndOrderFront: nil];
 
             let window_handle = Window {

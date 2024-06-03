@@ -12,10 +12,11 @@ use crate::{SugarBlock, SugarLine};
 
 pub struct SugarState {
     pub current: Box<SugarTree>,
-    pub next: SugarTree,
+    pub next: Box<SugarTree>,
     latest_change: SugarTreeDiff,
     dimensions_changed: bool,
     current_line: usize,
+    pub is_dirty: bool,
     pub compositors: SugarCompositors,
     // TODO: Decide if graphics should be in SugarTree or SugarState
     pub graphics: SugarloafGraphics,
@@ -32,11 +33,12 @@ impl SugarState {
             ..Default::default()
         };
         SugarState {
+            is_dirty: false,
             current_line: 0,
             compositors: SugarCompositors::new(font_library),
             graphics: SugarloafGraphics::default(),
             current: Box::<SugarTree>::default(),
-            next,
+            next: Box::new(next),
             dimensions_changed: false,
             latest_change: SugarTreeDiff::LayoutIsDifferent,
         }
@@ -49,6 +51,9 @@ impl SugarState {
 
     #[inline]
     pub fn compute_layout_rescale(&mut self, scale: f32) {
+        // In rescale case, we actually need to clean cache from the compositors
+        // because it's based on sugarline hash which only consider the font size
+        self.compositors.advanced.clean();
         self.next.layout.rescale(scale).update();
     }
 
@@ -141,12 +146,6 @@ impl SugarState {
         rect_brush: &mut RectBrush,
         context: &mut super::Context,
     ) -> bool {
-        // TODO: Fix drop of rendering context on wayland if diff is equal
-        #[cfg(not(feature = "render_equal_updates"))]
-        if self.latest_change == SugarTreeDiff::Equal {
-            return false;
-        }
-
         advance_brush.prepare(context, self);
 
         for section in &self.compositors.elementary.blocks_sections {
@@ -239,6 +238,7 @@ impl SugarState {
         self.current_line = 0;
         self.next.lines.clear();
         self.next.blocks.clear();
+        self.is_dirty = false;
     }
 
     #[inline]
@@ -263,7 +263,9 @@ impl SugarState {
         let mut should_resize = false;
         let mut should_compute_dimensions = false;
 
-        self.latest_change = self.current.calculate_diff(&self.next, false);
+        self.latest_change =
+            self.current
+                .calculate_diff(&self.next, false, self.is_dirty);
         match &self.latest_change {
             SugarTreeDiff::Equal => {
                 // Do nothing
@@ -282,28 +284,10 @@ impl SugarState {
                 should_update = true;
                 should_compute_dimensions = true;
             }
-            SugarTreeDiff::Changes(_changes) => {
+            SugarTreeDiff::Different => {
                 should_update = true;
-                // for change in changes {
-                //     match change {
-                //         Diff::Line(diff) => {
-                //             if lines_to_update.is_empty()
-                //                 || lines_to_update[lines_to_update.len() - 1] != diff.line
-                //             {
-                //                 lines_to_update.push(diff.line)
-                //             }
-                //         }
-                //         Diff::Char(diff) => {
-                //             if lines_to_update.is_empty()
-                //                 || lines_to_update[lines_to_update.len() - 1] != diff.line
-                //             {
-                //                 lines_to_update.push(diff.line)
-                //             }
-                //         }
-                //     }
-                // }
             }
-            _ => {
+            SugarTreeDiff::Changes(_changes) => {
                 should_update = true;
             }
         }
@@ -311,7 +295,7 @@ impl SugarState {
         log::info!("state compute_changes result: {:?}", self.latest_change);
 
         if should_update {
-            self.current = Box::new(std::mem::take(&mut self.next));
+            self.current = std::mem::take(&mut self.next);
 
             if should_compute_dimensions {
                 self.compositors

@@ -3,10 +3,8 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-// use std::ops::Range;
 use crate::sugarloaf::SugarloafLayout;
 use crate::{Sugar, SugarBlock, SugarLine};
-// use smallvec::SmallVec;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub struct DiffChar {
@@ -14,8 +12,6 @@ pub struct DiffChar {
     pub column: usize,
     pub before: Sugar,
     pub after: Sugar,
-    // range: Range<usize>,
-    // content: Vec<char>,
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
@@ -36,18 +32,12 @@ pub enum Diff {
 #[derive(Debug, PartialEq)]
 pub enum SugarTreeDiff {
     Equal,
-    CurrentTreeWasEmpty,
+    Different,
     BlocksAreDifferent,
     LineQuantity(i32),
-    WidthIsDifferent,
-    HeightIsDifferent,
-    ScaleIsDifferent,
-    MarginIsDifferent,
     LayoutIsDifferent,
     Changes(Vec<Diff>),
 }
-
-// const LINE_MAX_LINES: usize = 140;
 
 #[derive(Clone)]
 pub struct SugarTree {
@@ -60,51 +50,32 @@ impl Default for SugarTree {
     fn default() -> Self {
         Self {
             lines: Vec::new(),
-            blocks: Vec::with_capacity(14),
+            blocks: Vec::with_capacity(20),
             layout: SugarloafLayout::default(),
         }
     }
 }
 
-// impl Default for SugarTree {
-//     fn default() -> Self {
-//         // let inner = {
-//         //     // Create an array of uninitialized values.
-//         //     let mut array: [MaybeUninit<SugarLine>; LINE_MAX_LINES] =
-//         //         unsafe { MaybeUninit::uninit().assume_init() };
-
-//         //     for element in array.iter_mut() {
-//         //         *element = MaybeUninit::new(SugarLine::default());
-//         //     }
-
-//         //     unsafe { std::mem::transmute::<_, [SugarLine; LINE_MAX_LINES]>(array) }
-//         // };
-//         let mut inner_vec: Vec<SugarLine> = Vec::with_capacity(LINE_MAX_LINES);
-//         for _i in 0..LINE_MAX_LINES {
-//             inner_vec.push(SugarLine::default());
-//         }
-
-//         Self {
-//             // hash: 00000000000000,
-//             inner: inner_vec.try_into().unwrap(),
-//             len: 0,
-//             cursor_position: (0, 0),
-//         }
-//     }
-// }
-
 impl SugarTree {
     #[inline]
-    pub fn calculate_diff(&self, next: &SugarTree, exact: bool) -> SugarTreeDiff {
+    pub fn calculate_diff(
+        &self,
+        next: &SugarTree,
+        exact: bool,
+        is_dirty: bool,
+    ) -> SugarTreeDiff {
         if self.layout != next.layout {
             // In layout case, doesn't matter if blocks are different
             // or texts are different, it will repaint everything
             return SugarTreeDiff::LayoutIsDifferent;
         }
 
-        // TODO: Improve blocks comparisson
         if self.blocks != next.blocks {
             return SugarTreeDiff::BlocksAreDifferent;
+        }
+
+        if is_dirty {
+            return SugarTreeDiff::Different;
         }
 
         let current_len = self.lines.len();
@@ -133,6 +104,7 @@ impl SugarTree {
                 } else if line.hash_key() != next_line.hash_key() {
                     if !exact {
                         changes.push(Diff::Hash(true));
+                        break;
                     } else {
                         for column in 0..line.len() {
                             if line[column] != next_line[column] {
@@ -205,7 +177,7 @@ pub mod test {
         let mut sugartree_b = SugarTree::default();
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Equal
         );
 
@@ -222,24 +194,16 @@ pub mod test {
         });
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Equal
         );
 
         sugartree_a.layout.width = 300.0;
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::LayoutIsDifferent
         );
-
-        // sugartree_a.width = 0.0;
-        // sugartree_a.height = 100.0;
-
-        // assert_eq!(
-        //     sugartree_a.calculate_diff(&sugartree_b, true),
-        //     SugarTreeDiff::HeightIsDifferent
-        // );
     }
 
     #[test]
@@ -265,14 +229,14 @@ pub mod test {
         sugartree_a.insert(0, SugarLine::default());
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::LineQuantity(1)
         );
 
         sugartree_a.insert(1, SugarLine::default());
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::LineQuantity(2)
         );
 
@@ -281,7 +245,7 @@ pub mod test {
         sugartree_b.insert(2, SugarLine::default());
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::LineQuantity(-1)
         );
     }
@@ -309,7 +273,7 @@ pub mod test {
         });
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Changes(vec![Diff::Line(DiffLine {
                 line: 0,
                 before: 1,
@@ -323,7 +287,7 @@ pub mod test {
         });
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Changes(vec![Diff::Line(DiffLine {
                 line: 0,
                 before: 1,
@@ -345,7 +309,7 @@ pub mod test {
         });
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Changes(vec![Diff::Line(DiffLine {
                 line: 0,
                 before: 1,
@@ -359,7 +323,7 @@ pub mod test {
         });
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Changes(vec![Diff::Line(DiffLine {
                 line: 0,
                 before: 2,
@@ -369,7 +333,7 @@ pub mod test {
 
         sugartree_a.insert(1, SugarLine::default());
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::LineQuantity(1)
         );
     }
@@ -417,7 +381,7 @@ pub mod test {
         })];
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Changes(changes.clone())
         );
 
@@ -457,7 +421,7 @@ pub mod test {
         }));
 
         assert_eq!(
-            sugartree_a.calculate_diff(&sugartree_b, true),
+            sugartree_a.calculate_diff(&sugartree_b, true, false),
             SugarTreeDiff::Changes(changes)
         );
     }

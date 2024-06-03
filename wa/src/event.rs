@@ -361,7 +361,13 @@ pub trait EventHandler {
     ) {
     }
     fn key_up_event(&mut self, _id: u16, _keycode: KeyCode) {}
-    fn modifiers_event(&mut self, _id: u16, _keycode: KeyCode, _mods: ModifiersState) {}
+    fn modifiers_event(
+        &mut self,
+        _id: u16,
+        _keycode: Option<KeyCode>,
+        _mods: ModifiersState,
+    ) {
+    }
 
     fn focus_event(&mut self, _id: u16, _focused: bool) {}
 
@@ -429,6 +435,8 @@ pub trait EventHandler {
 
 pub enum WindowEvent {
     Focus(bool),
+    MouseMotion(f32, f32),
+    Resize(i32, i32, f32, bool),
 }
 
 pub enum QueuedEvent {

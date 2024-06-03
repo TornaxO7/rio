@@ -351,7 +351,6 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
     }
 
     #[inline]
-    #[allow(unused)]
     pub fn close_current_window(&mut self, is_last_tab: bool) {
         if self.config.is_native {
             self.event_proxy
@@ -442,12 +441,16 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
                         context.shell_pid,
                     );
 
+                    #[cfg(any(use_wa, target_os = "macos"))]
                     let path = teletypewriter::foreground_process_path(
                         *context.main_fd,
                         context.shell_pid,
                     )
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
+
+                    #[cfg(not(any(use_wa, target_os = "macos")))]
+                    let path = String::default();
 
                     #[cfg(not(target_os = "macos"))]
                     let terminal_title = String::from("");
@@ -470,10 +473,15 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
                             format!("{} ({})", terminal_title, program)
                         };
 
+                        #[cfg(any(use_wa, target_os = "macos"))]
                         self.event_proxy.send_event(
                             RioEvent::TitleWithSubtitle(window_title, path.clone()),
                             self.window_id,
                         );
+
+                        #[cfg(not(any(use_wa, target_os = "macos")))]
+                        self.event_proxy
+                            .send_event(RioEvent::Title(window_title), self.window_id);
                     }
 
                     id =
@@ -572,7 +580,7 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
         #[cfg(target_os = "windows")]
         self.close_context();
 
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         self.close_current_window(false);
     }
 
@@ -653,10 +661,8 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
         }
 
         if self.config.is_native {
-            self.event_proxy.send_event_with_high_priority(
-                RioEvent::CreateNativeTab(working_dir),
-                self.window_id,
-            );
+            self.event_proxy
+                .send_event(RioEvent::CreateNativeTab(working_dir), self.window_id);
             return;
         }
 
@@ -690,6 +696,34 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
     }
 }
 
+pub fn process_open_url(
+    mut shell: Shell,
+    mut working_dir: Option<String>,
+    editor: String,
+    open_url: Option<&str>,
+) -> (Shell, Option<String>) {
+    if open_url.is_none() {
+        return (shell, working_dir);
+    }
+
+    if let Ok(url) = url::Url::parse(open_url.unwrap_or_default()) {
+        if let Ok(path_buf) = url.to_file_path() {
+            if path_buf.exists() {
+                if path_buf.is_file() {
+                    shell = Shell {
+                        program: editor,
+                        args: vec![path_buf.display().to_string()],
+                    }
+                } else if path_buf.is_dir() {
+                    working_dir = Some(path_buf.display().to_string());
+                }
+            }
+        }
+    }
+
+    (shell, working_dir)
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -697,10 +731,10 @@ pub mod test {
 
     #[test]
     fn test_capacity() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let context_manager =
@@ -715,10 +749,10 @@ pub mod test {
 
     #[test]
     fn test_add_context() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let mut context_manager =
@@ -747,10 +781,10 @@ pub mod test {
 
     #[test]
     fn test_add_context_start_with_capacity_limit() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let mut context_manager =
@@ -785,10 +819,10 @@ pub mod test {
 
     #[test]
     fn test_set_current() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let mut context_manager =
@@ -826,10 +860,10 @@ pub mod test {
 
     #[test]
     fn test_close_context() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let mut context_manager =
@@ -861,10 +895,10 @@ pub mod test {
 
     #[test]
     fn test_close_context_upcoming_ids() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let mut context_manager =
@@ -916,10 +950,10 @@ pub mod test {
 
     #[test]
     fn test_close_last_context() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let mut context_manager =
@@ -949,10 +983,10 @@ pub mod test {
 
     #[test]
     fn test_switch_to_next() {
-        #[cfg(target_os = "macos")]
+        #[cfg(use_wa)]
         let window_id: WindowId = 0;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(use_wa))]
         let window_id: WindowId = WindowId::from(0);
 
         let mut context_manager =

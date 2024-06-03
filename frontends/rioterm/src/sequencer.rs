@@ -58,9 +58,10 @@ impl Sequencer {
         );
         let mut scheduler = Scheduler::new(proxy);
 
-        let window =
-            RouteWindow::new(&event_loop, &self.config, &self.router.font_library)
+        let mut window =
+            RouteWindow::new(&event_loop, &self.config, &self.router.font_library, None)
                 .await?;
+        window.is_focused = true;
         self.router.create_route_from_window(window);
 
         event_loop.listen_device_events(DeviceEvents::Never);
@@ -187,7 +188,16 @@ impl Sequencer {
                         }
                         RioEventType::Rio(RioEvent::Title(title)) => {
                             if let Some(route) = self.router.routes.get_mut(&window_id) {
-                                route.set_window_title(title);
+                                route.set_window_title(&title);
+                            }
+                        }
+                        RioEventType::Rio(RioEvent::TitleWithSubtitle(
+                            title,
+                            subtitle,
+                        )) => {
+                            if let Some(route) = self.router.routes.get_mut(&window_id) {
+                                route.set_window_title(&title);
+                                route.set_window_subtitle(&subtitle);
                             }
                         }
                         RioEventType::BlinkCursor | RioEventType::BlinkCursorTimeout => {}
@@ -276,6 +286,7 @@ impl Sequencer {
                                 event_loop_window_target,
                                 self.event_proxy.clone().unwrap(),
                                 &self.config,
+                                None,
                             );
                         }
                         #[cfg(target_os = "macos")]
@@ -312,6 +323,7 @@ impl Sequencer {
                                     self.event_proxy.clone().unwrap(),
                                     &self.config,
                                     Some(route.window.winit_window.tabbing_identifier()),
+                                    None,
                                 );
 
                                 if let Some(old_config) = should_revert_to_previous_config
@@ -344,6 +356,7 @@ impl Sequencer {
                                             event_loop_window_target,
                                             self.event_proxy.clone().unwrap(),
                                             &self.config,
+                                            None,
                                         );
                                     }
                                 }
@@ -406,6 +419,47 @@ impl Sequencer {
 
                 Event::NewEvents(StartCause::Init) => {
                     // noop
+                }
+
+                #[cfg(target_os = "macos")]
+                Event::Opened { urls } => {
+                    if !self.config.navigation.is_native() {
+                        for url in urls {
+                            self.router.create_window(
+                                event_loop_window_target,
+                                self.event_proxy.clone().unwrap(),
+                                &self.config,
+                                Some(&url),
+                            );
+                        }
+                        return;
+                    }
+
+                    let mut tab_id = None;
+
+                    // In case only have one window
+                    for (_, route) in self.router.routes.iter() {
+                        if tab_id.is_none() {
+                            tab_id = Some(route.window.winit_window.tabbing_identifier());
+                        }
+
+                        if route.window.is_focused {
+                            tab_id = Some(route.window.winit_window.tabbing_identifier());
+                            break;
+                        }
+                    }
+
+                    if tab_id.is_some() {
+                        for url in urls {
+                            self.router.create_native_tab(
+                                event_loop_window_target,
+                                self.event_proxy.clone().unwrap(),
+                                &self.config,
+                                tab_id.clone(),
+                                Some(&url),
+                            );
+                        }
+                    }
                 }
 
                 Event::Resumed => {
@@ -827,12 +881,12 @@ impl Sequencer {
                         route.window.screen.state.last_typing = Some(Instant::now());
                         route.window.screen.process_key_event(&key_event);
 
-                        if key_event.state == ElementState::Released {
-                            if self.config.hide_cursor_when_typing {
-                                route.window.winit_window.set_cursor_visible(false);
-                            }
+                        if key_event.state == ElementState::Released
+                            && self.config.hide_cursor_when_typing
+                        {
+                            route.window.winit_window.set_cursor_visible(false);
 
-                            route.redraw();
+                            // route.redraw();
                         }
                     }
                 }
@@ -974,10 +1028,11 @@ impl Sequencer {
                     ..
                 } => {
                     if let Some(route) = self.router.routes.get_mut(&window_id) {
-                        route.window.screen.set_scale(
-                            scale_factor as f32,
-                            route.window.winit_window.inner_size(),
-                        );
+                        let scale = scale_factor as f32;
+                        route
+                            .window
+                            .screen
+                            .set_scale(scale, route.window.winit_window.inner_size());
                         route.redraw();
                     }
                 }

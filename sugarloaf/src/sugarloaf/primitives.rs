@@ -201,10 +201,6 @@ pub struct SugarBlock {
 /// It often represents a line of text but can also be other elements like bitmap
 #[derive(Debug, Clone, Default)]
 pub struct SugarLine {
-    // hash: u64,
-    // Sized arrays can take up to half of time to execute
-    // https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=b3face22f8c64b25803fa213be6a858f
-
     // inner: [Sugar; SUGAR_LINE_MAX_CONTENT_SIZE],
     pub raw_len: usize,
     inner: Vec<Sugar>,
@@ -254,33 +250,6 @@ impl PartialEq for SugarLine {
 }
 
 impl SugarLine {
-    // #[inline]
-    // pub fn insert(&mut self, sugar: &Sugar) {
-    //     let previous = if self.acc > 0 { self.acc - 1 } else { 0 };
-
-    //     if equal_without_consider_repeat(&self.inner[previous], sugar) {
-    //         self.inner[previous].repeated += 1;
-    //         self.len += 1;
-    //         return;
-    //     }
-
-    //     self.inner[self.acc] = *sugar;
-
-    //     if sugar != &self.default_sugar {
-    //         if self.first_non_default == 0 {
-    //             self.first_non_default = self.acc;
-    //             self.last_non_default = self.acc;
-    //         } else {
-    //             self.last_non_default = self.acc;
-    //         }
-
-    //         self.non_default_count += 1;
-    //     }
-
-    //     self.acc += 1;
-    //     self.len += 1;
-    // }
-
     #[inline]
     fn build_hash_key(&self) -> u64 {
         let mut s = DefaultHasher::new();
@@ -344,14 +313,6 @@ impl SugarLine {
     pub fn inner(&self) -> &Vec<Sugar> {
         &self.inner
     }
-
-    // #[inline]
-    // fn compute_hash(&mut self) {
-    // 00000000000000
-    // 00000000000000 -> first non-default apparison position
-    // 00000000000000 -> last non-default apparison position
-    // 00000000000000 ->
-    // }
 
     #[inline]
     pub fn is_empty(&self) -> bool {

@@ -8,13 +8,7 @@ pub struct Handler {
 
 pub enum HandlerState {
     NotLaunched,
-    Running {
-        handler: Box<dyn EventHandler>,
-    },
-    Waiting {
-        handler: Box<dyn EventHandler>,
-        start: std::time::Instant,
-    },
+    Running { handler: Box<dyn EventHandler> },
     Terminated,
 }
 
@@ -49,8 +43,6 @@ impl Default for EventLoopWaker {
                 wakeup_main_loop,
                 std::ptr::null_mut(),
             );
-            let is_valid: bool = CFRunLoopTimerIsValid(timer);
-            assert!(is_valid);
 
             CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
             EventLoopWaker {
